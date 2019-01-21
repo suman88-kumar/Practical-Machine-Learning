@@ -1,0 +1,219 @@
+---
+title: "Practical Machine Learning - Personal Activity Tracking"
+output: html_document
+---
+
+### Overview
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks.One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, our goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict the manner in which the participants did the exercise using a machine learning algorithm. The outcome to be predicted is the "classe" variable in the dataset. The participants were asked to perform barbell lifts correctly and incorrectly in 5 different ways as given below.
+
+1. Exactly according to the specification (Class A)
+2. Throwing the elbows to the front (Class B)
+3. Lifting the dumbbell only halfway (Class C)
+4. Lowering the dumbbell only halfway (Class D)
+5. Throwing the hips to the front (Class E)
+
+The training data for this project is available [here](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) and the test data is available [here](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv). More information on the data is available [here](http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har)
+
+### Data Processing & Exploratory data analyses
+
+Let us download the data file & save in the current working directory.
+```{r, echo = TRUE}
+#rm(list=ls())
+set.seed(2019)
+if(!file.exists("./data")){dir.create("./data")}
+if(!file.exists("./data/pml-training.csv")){
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",destfile="./data/pml-training.csv")
+}
+if(!file.exists("./data/pml-testing.csv")){
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",destfile="./data/pml-testing.csv")
+}
+```
+
+Let us now clean the data by removing NA, "" and #DIV/0! values and load it in training_data variable. Also, let us remove columns which contain NA in more than 90% of the observations. Also, let us remove the first 7 columns as these don't help in prediction. Post this, let us also check for variables with no variability - these variables are not useful in a prediction model.
+
+```{r, echo = TRUE}
+training_data <- read.csv("./data/pml-training.csv", na.strings=c("NA","","#DIV/0!"))
+dim(training_data)
+training_data <- training_data[,colSums(is.na(training_data))/nrow(training_data) <= 0.90]
+dim(training_data)
+# colSums(is.na(training_data)) ## we find that there are no NA values now
+training_data   <-training_data[,-c(1:7)]
+dim(training_data)
+require(caret)
+nearZeroVar(training_data,saveMetrics=TRUE)
+```
+
+Let us now keep the same columns in the test data as in training_data & remove all other columns. Please note that last column in training data is classe while the last column in testing data is problem_id. We need to predict the classe variable for the observations in the test data.
+
+```{r, echo = TRUE}
+testing_data <- read.csv("./data/pml-testing.csv", na.strings=c("NA","","#DIV/0!"))
+dim(testing_data)
+testing_data <- testing_data[,names(training_data)[1:52]]
+dim(testing_data)
+```
+
+Let us now explore the classe variable and all the other variable which have high correlation with classe variable. Let us also make boxplot to depict classe variable against the top three correlated variables .
+
+```{r, echo = TRUE}
+table(training_data$classe)
+qplot(training_data$classe,colour = I("blue"), ylab = "count", xlab = "Activity Quality (classe)")
+
+classeIndex <- which(names(training_data) == "classe")
+correlations <- cor(training_data[, -classeIndex], as.numeric(training_data$classe))
+tail(sort(correlations[,1]))
+# install.packages("Rmisc")
+# install.packages("ggplot2")
+
+require(Rmisc)
+require(ggplot2)
+p1 <- ggplot(training_data, aes(x=classe, y=accel_arm_x, fill=classe)) + geom_boxplot() + xlab("classe") + ylab("accel_arm_x")
+p2 <- ggplot(training_data, aes(x=classe, y=magnet_arm_x, fill=classe)) + geom_boxplot() + xlab("classe") + ylab("magnet_arm_x")
+p3 <- ggplot(training_data, aes(x=classe, y=pitch_forearm, fill=classe)) + geom_boxplot() + xlab("classe") + ylab("pitch_forearm")
+multiplot(p1,p2,p3,cols=3)
+
+```
+
+Although some pattern can be seen in the boxplots above but there is no clear distiction by which we can predict classe variable based on any of the top correlated variables.
+
+### Building Machine Learning Algorithm
+Let us now seggregate the available training_data into 2 sets - training (60% of the total training_data) and testing (40% of the total training_data). Let us also show the dimensions of original, training and testing datasets post partition.
+
+```{r, echo = TRUE}
+
+inTrain <- createDataPartition(y = training_data$classe, p = 0.6, list = FALSE)
+training <- training_data[inTrain,]
+testing <- training_data[-inTrain,]
+rbind("original dataset" = dim(training_data),"training set" = dim(training),"testing set" = dim(testing))
+
+```
+
+Let us begin with Decision Tree Model.
+
+```{r, echo = TRUE}
+DT_modelFile <- "DT_model.RData"
+if (!file.exists(DT_modelFile)) {
+  DT_model <- train(classe ~ ., method="rpart", data = training)
+  save(DT_model, file = "DT_model.RData")
+} else {load(file = DT_modelFile, verbose = TRUE)}
+confusionMatrix(testing$classe,predict(DT_model,testing))
+postResample(predict(DT_model,testing),testing$classe)
+
+DT_PCA_modelFile <- "DT_PCA_model.RData"
+if (!file.exists(DT_PCA_modelFile)) {
+  DT_PCA_model <- train(classe ~ ., method="rpart", preProcess="pca", data=training)
+  save(DT_PCA_model, file = "DT_PCA_model.RData")
+} else {load(file = DT_PCA_modelFile, verbose = TRUE)}
+confusionMatrix(testing$classe,predict(DT_PCA_model,testing))
+postResample(predict(DT_PCA_model,testing),testing$classe)
+
+rpart.plot::prp(DT_model$finalModel)
+rpart.plot::prp(DT_PCA_model$finalModel)
+```
+
+We find that accuracy of Decision Tree model is not upto the acceptable limit. Let us check the Gradient Boost Model now.
+
+```{r, echo = TRUE}
+controlGBM <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+
+cGBM_modelFile <- "cGBM_model.RData"
+if (!file.exists(cGBM_modelFile)) {
+  cGBM_model <- train(classe ~ ., method="gbm", trControl = controlGBM, data=training, verbose=F)
+  save(cGBM_model, file = "cGBM_model.RData")
+} else {load(file = cGBM_modelFile, verbose = TRUE)}
+confusionMatrix(testing$classe,predict(cGBM_model,testing))
+postResample(predict(cGBM_model,testing),testing$classe)
+
+cGBM_PCA_modelFile <- "cGBM_PCA_model.RData"
+if (!file.exists(cGBM_PCA_modelFile)) {
+  cGBM_PCA_model <- train(classe ~ ., method="gbm", preProcess="pca", trControl = controlGBM, data=training, verbose=F)
+  save(cGBM_PCA_model, file = "cGBM_PCA_model.RData")
+} else {load(file = cGBM_PCA_modelFile, verbose = TRUE)}
+confusionMatrix(testing$classe,predict(cGBM_PCA_model,testing))
+postResample(predict(cGBM_PCA_model,testing),testing$classe)
+
+GBM_modelFile <- "GBM_model.RData"
+if (!file.exists(GBM_modelFile)) {
+  GBM_model <- train(classe ~ ., method="gbm", data=training, verbose=F)
+  save(GBM_model, file = "GBM_model.RData")
+} else {load(file = GBM_modelFile, verbose = TRUE)}
+confusionMatrix(testing$classe,predict(GBM_model,testing))
+postResample(predict(GBM_model,testing),testing$classe)
+
+GBM_PCA_modelFile <- "GBM_PCA_model.RData"
+if (!file.exists(GBM_PCA_modelFile)) {
+  GBM_PCA_model <- train(classe ~ ., method="gbm", preProcess="pca", data=training, verbose=F)
+  save(GBM_PCA_model, file = "GBM_PCA_model.RData")
+} else {load(file = GBM_PCA_modelFile, verbose = TRUE)}
+confusionMatrix(testing$classe,predict(GBM_PCA_model,testing))
+postResample(predict(GBM_PCA_model,testing),testing$classe)
+```
+
+The accuracy for Gradient Boost Model is quite acceptable. However, let us also check the accuracy of Random Forest Method before we use the model for final prediction. As Random Forest Algorithm is quite computing intensive, we will run it in parallel processing.
+
+```{r, echo = TRUE}
+cluster <- parallel::makeCluster(parallel::detectCores() - 2)
+doParallel::registerDoParallel(cluster)
+controlRF <- trainControl(method="cv", 5, verboseIter=FALSE, allowParallel = TRUE)
+
+cRF_modelFile <- "cRF_model.RData"
+if (!file.exists(cRF_modelFile)) {
+  cRF_model <- train(classe ~ ., method="rf", data = training, trControl = controlRF, ntree=100,  do.trace=TRUE)
+  save(cRF_model, file = "cRF_model.RData")
+} else {load(file = cRF_modelFile, verbose = TRUE)}
+confusionMatrix(testing$classe,predict(cRF_model,testing))
+postResample(predict(cRF_model,testing),testing$classe)
+
+cRF_PCA_modelFile <- "cRF_PCA_model.RData"
+if (!file.exists(cRF_PCA_modelFile)) {
+  cRF_PCA_model <- train(classe ~ ., method="rf", preProcess="pca", data=training, trControl = controlRF, ntree=100,  do.trace=FALSE)
+  save(cRF_PCA_model, file = "cRF_PCA_model.RData")
+} else {load(file = cRF_PCA_modelFile, verbose = TRUE)}
+confusionMatrix(testing$classe,predict(cRF_PCA_model,testing))
+postResample(predict(cRF_PCA_model,testing),testing$classe)
+
+parallel::stopCluster(cluster)
+```
+
+Let us now summarize the Accuracy of all the above models.
+
+```{r, echo = TRUE}
+postResample(predict(DT_model,testing),testing$classe)
+postResample(predict(DT_PCA_model,testing),testing$classe)
+postResample(predict(cGBM_model,testing),testing$classe)
+postResample(predict(cGBM_PCA_model,testing),testing$classe)
+postResample(predict(GBM_model,testing),testing$classe)
+postResample(predict(GBM_PCA_model,testing),testing$classe)
+postResample(predict(cRF_model,testing),testing$classe)
+postResample(predict(cRF_PCA_model,testing),testing$classe)
+```
+
+Let us also check the predictions for all the above models.
+
+```{r, echo = TRUE}
+predictions <- t(cbind(
+    DT_model=as.data.frame(predict(DT_model, testing_data)),
+    DT_PCA_model=as.data.frame(predict(DT_PCA_model, testing_data)),
+    cGBM_model=as.data.frame(predict(cGBM_model, testing_data)),
+    cGBM_PCA_model=as.data.frame(predict(cGBM_PCA_model, testing_data)),
+    GBM_model=as.data.frame(predict(GBM_model, testing_data)),
+    GBM_PCA_model=as.data.frame(predict(GBM_PCA_model, testing_data)),
+    cRF_model=as.data.frame(predict(cRF_model, testing_data)),
+    cRF_PCA_model=as.data.frame(predict(cRF_PCA_model, testing_data))
+))
+predictions
+
+```
+
+### Conclusion:
+Since, Random Forest model outperforms Gradient Boost Model & Decision Tree model in terms of accuracy, we will use Random Forest model for final prediction from testing_data. Our final model has an accuracy of 99.1% and the predictions are shown below.
+
+```{r, echo = TRUE}
+
+predict(cRF_model, testing_data)
+
+```
+
+
+
+.
